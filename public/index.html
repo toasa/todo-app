@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <title>ToDo App</title>
+</head>
+
+<body>
+    <h1>My ToDo App</h1>
+
+    <div id="login-section">
+        <h2>Login</h2>
+        <input type="text" id="username" placeholder="Username" value="dev_user">
+        <input type="password" id="password" placeholder="Password" value="secure_password">
+        <button onclick="login()">Login</button>
+    </div>
+
+    <div id="todo-section" stype="display:none;">
+        <h2>My Tasks</h2>
+        <ul id="todo-list"></ul>
+        <input type="text" id="new-todo" placeholder="New Task">
+        <button onclick="addTodo()">Add</button>
+    </div>
+
+    <script>
+        let token = '';
+
+        // ログイン処理
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            // Nginx 経由なので /api/login に投げる
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await res.json();
+            if (data.token) {
+                token = data.token;
+                document.getElementById('login-section').style.display = 'none';
+                document.getElementById('todo-section').style.display = 'block';
+                fetchTodos();
+            } else {
+                alert('Login Failed: ' + JSON.stringify(data));
+            }
+        }
+
+        // 一覧取得
+        async function fetchTodos() {
+            const res = await fetch('/api/todos', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const todos = await res.json();
+            const list = document.getElementById('todo-list');
+            list.innerHTML = '';
+            todos.forEach(todo => {
+                const li = document.createElement('li');
+                li.textContent = `${todo.id}: ${todo.title} (${todo.is_completed ? 'Done' : 'Doing'})`;
+                list.appendChild(li);
+            });
+        }
+
+        // ToDo追加
+        async function addTodo() {
+            const title = document.getElementById('new-todo').value;
+            await fetch('/api/todos', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ title })
+            });
+            document.getElementById('new-todo').value = '';
+            fetchTodos();
+        }
+    </script>
+</body>
+
+</html>
