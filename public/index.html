@@ -3,7 +3,48 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ToDo App</title>
+    <style>
+        /* 少しだけ見やすくするためのCSS */
+        body {
+            font-family: sans-serif;
+            max-width: 600px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+
+        .task-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .task-content {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .completed {
+            text-decoration: line-through;
+            color: #888;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        .btn-delete {
+            color: white;
+            background-color: #ff4444;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+    </style>
 </head>
 
 <body>
@@ -18,55 +59,89 @@
 
     <div id="todo-section" style="display:none;">
         <h2>My Tasks</h2>
-        <ul id="todo-list"></ul>
-        <input type="text" id="new-todo" placeholder="New Task">
-        <button onclick="addTodo()">Add</button>
+
+        <div style="margin-bottom: 20px;">
+            <input type="text" id="new-todo" placeholder="New Task">
+            <button onclick="addTodo()">Add Task</button>
+        </div>
+
+        <ul id="todo-list" style="list-style: none; padding: 0;"></ul>
+
+        <div style="margin-top: 20px;">
+            <button onclick="logout()">Logout</button>
+        </div>
     </div>
 
     <script>
-        let token = '';
+        let token = localStorage.getItem('todo_token') || '';
 
-        // ログイン処理
+        // ページ読み込み時にトークンがあれば自動でログイン状態にする
+        if (token) {
+            showTodoSection();
+            fetchTodos();
+        }
+
+        function showTodoSection() {
+            document.getElementById('login-section').style.display = 'none';
+            document.getElementById('todo-section').style.display = 'block';
+        }
+
+        function logout() {
+            token = '';
+            localStorage.removeItem('todo_token');
+            document.getElementById('login-section').style.display = 'block';
+            document.getElementById('todo-section').style.display = 'none';
+        }
+
+        // --- 認証 (Login) ---
         async function login() {
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
 
-            // Nginx 経由なので /api/login に投げる
-            const res = await fetch('/api/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            });
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
 
-            const data = await res.json();
-            if (data.token) {
-                token = data.token;
-                document.getElementById('login-section').style.display = 'none';
-                document.getElementById('todo-section').style.display = 'block';
-                fetchTodos();
-            } else {
-                alert('Login Failed: ' + JSON.stringify(data));
+                const data = await res.json();
+                if (res.ok && data.token) {
+                    token = data.token;
+                    localStorage.setItem('todo_token', token); // ブラウザに保存
+                    showTodoSection();
+                    fetchTodos();
+                } else {
+                    alert('Login Failed: ' + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Network Error');
             }
         }
 
-        // 一覧取得
+        // --- 一覧取得 (READ: GET) ---
         async function fetchTodos() {
+            if (!token) return;
             const res = await fetch('/api/todos', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
+
+            if (res.status === 401 || res.status === 403) {
+                logout();
+                return;
+            }
+
             const todos = await res.json();
-            const list = document.getElementById('todo-list');
-            list.innerHTML = '';
-            todos.forEach(todo => {
-                const li = document.createElement('li');
-                li.textContent = `${todo.id}: ${todo.title} (${todo.is_completed ? 'Done' : 'Doing'})`;
-                list.appendChild(li);
-            });
+            renderList(todos);
         }
 
-        // ToDo追加
+        // --- 新規作成 (CREATE: POST) ---
         async function addTodo() {
-            const title = document.getElementById('new-todo').value;
+            const input = document.getElementById('new-todo');
+            const title = input.value;
+            if (!title) return;
+
             await fetch('/api/todos', {
                 method: 'POST',
                 headers: {
@@ -75,8 +150,70 @@
                 },
                 body: JSON.stringify({ title })
             });
-            document.getElementById('new-todo').value = '';
-            fetchTodos();
+
+            input.value = '';
+            fetchTodos(); // リスト再取得
+        }
+
+        // --- 更新 (UPDATE: PUT) ---
+        // 完了状態(checkbox)を切り替える
+        async function toggleTodo(id, currentTitle, currentStatus) {
+            // 反転したステータスを送信
+            const newStatus = !currentStatus;
+
+            await fetch(`/api/todos/${id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                // バックエンドの実装上、title も必須なので今の title をそのまま送る
+                body: JSON.stringify({
+                    title: currentTitle,
+                    is_completed: newStatus
+                })
+            });
+
+            fetchTodos(); // リスト再取得
+        }
+
+        // --- 削除 (DELETE: DELETE) ---
+        async function deleteTodo(id) {
+            if (!confirm('Are you sure?')) return;
+
+            await fetch(`/api/todos/${id}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            fetchTodos(); // リスト再取得
+        }
+
+        // リスト描画用関数
+        function renderList(todos) {
+            const list = document.getElementById('todo-list');
+            list.innerHTML = '';
+
+            todos.forEach(todo => {
+                const li = document.createElement('li');
+                li.className = 'task-item';
+
+                // HTML生成
+                // onchange で toggleTodo を呼ぶ (PUT)
+                // onclick で deleteTodo を呼ぶ (DELETE)
+                li.innerHTML = `
+                    <div class="task-content">
+                        <input type="checkbox"
+                               ${todo.is_completed ? 'checked' : ''}
+                               onchange="toggleTodo(${todo.id}, '${todo.title}', ${todo.is_completed})">
+                        <span class="${todo.is_completed ? 'completed' : ''}">${todo.title}</span>
+                    </div>
+                    <button class="btn-delete" onclick="deleteTodo(${todo.id})">Delete</button>
+                `;
+                list.appendChild(li);
+            });
         }
     </script>
 </body>
